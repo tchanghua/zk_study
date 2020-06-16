@@ -1,8 +1,12 @@
 package com.tch.zkcenter.config;
 
 import com.alibaba.druid.pool.DruidDataSource;
+import com.alibaba.druid.pool.DruidPooledConnection;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
+import org.apache.curator.framework.recipes.cache.PathChildrenCache;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.curator.retry.RetryNTimes;
 
 import java.sql.Connection;
@@ -27,6 +31,7 @@ public class DBConfig {
     public static Connection getConnection(){
         if(threadLocal.get() != null){
             try{
+                DruidPooledConnection connection = threadLocal.get().getConnection();
                 return threadLocal.get().getConnection();
             }catch (SQLException e){
                 e.printStackTrace();
@@ -44,7 +49,27 @@ public class DBConfig {
     }
 
     private static void startListener() {
-//        PathChildrenCache
+        PathChildrenCache pathChildrenCache = new PathChildrenCache(zkClient,CONFIG_PREFIX,true);
+        pathChildrenCache.getListenable().addListener(new PathChildrenCacheListener() {
+            @Override
+            public void childEvent(CuratorFramework curatorFramework, PathChildrenCacheEvent pathChildrenCacheEvent) throws Exception {
+                String path = pathChildrenCacheEvent.getData().getPath();
+                System.out.println("该节点数据产生变更："+new String(pathChildrenCacheEvent.getData().getData()));
+                if(path.startsWith(CONFIG_PREFIX)){
+                    String  key = path.replace(CONFIG_PREFIX +"/","");
+                    if(PathChildrenCacheEvent.Type.CHILD_UPDATED.equals(pathChildrenCacheEvent.getType())){
+                        System.out.println("更新配置信息");
+                        map.put(key,new String(pathChildrenCacheEvent.getData().getData()));
+                        if(threadLocal.get()!= null){
+                            threadLocal.get().close();
+                        }
+                        initDataSource();
+                        System.out.println("更新连接池");
+                    }
+                }
+                pathChildrenCache.start();
+            }
+        });
     }
 
     private static void initDataSource() throws SQLException{
